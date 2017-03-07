@@ -339,10 +339,8 @@ AGES: while( !$DONE && @AGES ) {
                 if( keys %subaggs ) {
                     foreach my $subagg (sort keys %subaggs) {
                         foreach my $extra ( @{ $subaggs{$subagg} } ) {
-                            my @copy = @out;
-                            splice @copy, exists $OPT{by} ? 2 : 1, 0, $subagg, @{ $extra };
                             output({data=>1},
-                                join "\t", @copy
+                                join "\t", @out, $subagg, @{ $extra }
                             );
                         }
                     }
