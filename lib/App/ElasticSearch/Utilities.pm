@@ -927,19 +927,10 @@ sub es_index_fields {
 
     # Loop through the mappings, skipping _default_
     my @mappings = grep { $_ ne '_default_' } keys %{ $ref };
-    my %fieldcache;
+    my %fields;
     foreach my $mapping (@mappings) {
-        _find_fields(\%fieldcache,$ref->{$mapping});
+        _find_fields(\%fields,$ref->{$mapping});
     }
-
-    # Store full path
-    my %fields = %{ $fieldcache{full} };
-
-    # Now add unique aliases
-    my @uniqaliases = grep { not exists $fields{$_} }
-                      grep { $fieldcache{alias}->{$_} == 1 }
-                        keys %{ $fieldcache{alias} };
-    @fields{@uniqaliases} = ();
     # Return the results
     return wantarray ? sort keys %fields : [ sort keys %fields ];
 }
@@ -950,20 +941,9 @@ sub _add_fields {
 
     return unless @path;
 
-    # initialize the fields
-    $f->{full}  ||= {};
-    $f->{alias} ||= {};
-
     # Store the full path
     my $key = join('.', @path);
-    $f->{full}{$key} = 1;
-
-    # Aliases
-    my $alias = $key eq $path[-1] ? undef : $path[-1];
-    if( $alias ) {
-        $f->{alias}{$alias} ||= 0;
-        $f->{alias}{$alias}++;
-    }
+    $f->{$key} = 1;
 }
 
 sub _find_fields {
