@@ -230,6 +230,7 @@ if( !defined $_OPTIONS_PARSED ) {
         'http-username:s',
         'http-password:s',
         'password-exec:s',
+        'master-only|M',
     );
     $_OPTIONS_PARSED = 1;
 }
@@ -264,6 +265,7 @@ my %DEF = (
                    exists $_GLOBALS{noop}         ? $_GLOBALS{noop} : undef,
     NOPROXY     => exists $opt{'keep-proxy'}      ? 0 :
                    exists $_GLOBALS{'keep-proxy'} ? $_GLOBALS{'keep-proxy'} : 1,
+    MASTERONLY  => exists $opt{'master-only'}     ? $opt{'master-only'} : 0,
     # HTTP Basic Authentication
     USERNAME    => exists $opt{'http-username'}       ? $opt{'http-username'} :
                    exists $_GLOBALS{'http-username'}  ? $_GLOBALS{'http-username'} : undef,
