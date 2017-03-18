@@ -43,6 +43,7 @@ GetOptions(\%OPT, qw(
     tail
     timestamp:s
     top:s
+    interval:s
     with:s@
 ));
 
@@ -77,8 +78,8 @@ my %CONFIG = (
     format    => (exists $OPT{format} && length $OPT{format})       ? lc $OPT{format}         : 'yaml',
     timestamp => (exists $OPT{timestamp} && length $OPT{timestamp}) ? $OPT{timestamp}         :
                  defined es_globals('timestamp')                    ? es_globals('timestamp') : '@timestamp',
+    summary   => $OPT{top} && ( !$OPT{by} && !$OPT{with} && !$OPT{interval} ),
 );
-
 #------------------------------------------------------------------------#
 # Handle Indices
 my $ORDER = exists $OPT{asc} && $OPT{asc} ? 'asc' : 'desc';
@@ -207,6 +208,15 @@ if( exists $OPT{top} ) {
         $agg{$top_agg}->{size} = $CONFIG{size};
     }
     $q->add_aggregations( top => \%agg );
+
+    if( $OPT{interval} ) {
+        $q->wrap_aggregations( step => {
+            date_histogram => {
+                field    => $CONFIG{timestamp},
+                interval => $OPT{interval},
+            }
+        });
+    }
 }
 elsif(exists $OPT{tail}) {
     $q->set_size(20);
@@ -295,67 +305,76 @@ AGES: while( !$DONE && @AGES ) {
         my $hits = is_arrayref($result->{hits}{hits}) ? $result->{hits}{hits} : [];
 
         # Handle Aggregations
-        my $aggs = exists $result->{aggregations} ? $result->{aggregations}{top}{buckets} : [];
-        if( @$aggs ) {
-            output({color=>'cyan'},$agg_header) unless $OPT{'no-header'};
-            foreach my $agg ( @$aggs ) {
-                $AGGS_TOTALS{$agg->{key}} ||= 0;
-                $AGGS_TOTALS{$agg->{key}} += $agg->{doc_count};
-                my @out = ();
+        if( exists $result->{aggregations} ) {
+            my $steps = exists $result->{aggregations}{step} ? $result->{aggregations}{step}{buckets}
+                      : [ $result->{aggregations} ];
+            my $indent = exists $result->{aggregations}{step} ? 1 : 0;
+            foreach my $step ( @$steps ) {
+                my $aggs = exists $step->{top} ? $step->{top}{buckets} : [];
+                if( exists $step->{key_as_string} ) {
+                    output({color=>'cyan',clear=>1}, sprintf "%d\t%s", @{$step}{qw(doc_count key_as_string)});
+                }
+                if( @$aggs ) {
+                    output({color=>'cyan',indent=>$indent},$agg_header) unless $OPT{'no-header'};
+                    foreach my $agg ( @$aggs ) {
+                        $AGGS_TOTALS{$agg->{key}} ||= 0;
+                        $AGGS_TOTALS{$agg->{key}} += $agg->{doc_count};
+                        my @out = ();
 
-                foreach my $k (qw(score doc_count bg_count key)) {
-                    next unless exists $agg->{$k};
-                    my $value = delete $agg->{$k};
-                    push @out, defined $value ? ($k eq 'score' ? sprintf "%0.3f", $value : $value ) : '-';
-                }
-                if(exists $agg->{by} ) {
-                    my $by = delete $agg->{by};
-                    if( exists $by->{value} ) {
-                        unshift @out, $by->{value};
-                    }
-                }
-                # Handle the --with elements
-                my %subaggs = ();
-                if( keys %{ $agg } ) {
-                    foreach my $k (sort keys %{ $agg }) {
-                        next unless is_hashref($agg->{$k});
-                        if( exists $agg->{$k}{buckets} ) {
-                            my @sub;
-                            foreach my $subagg (@{ $agg->{$k}{buckets} }) {
-                                my @elms = ();
-                                next unless exists $subagg->{key};
-                                push @elms, $subagg->{key};
-                                foreach my $dk (qw(doc_count score bg_count)) {
-                                    next unless exists $subagg->{$dk};
-                                    my $v = delete $subagg->{$dk};
-                                    push @elms, defined $v ? ($dk eq 'score' ? sprintf "%0.3f", $v : $v ) : '-';
-                                }
-                                push @sub, \@elms;
+                        foreach my $k (qw(score doc_count bg_count key)) {
+                            next unless exists $agg->{$k};
+                            my $value = delete $agg->{$k};
+                            push @out, defined $value ? ($k eq 'score' ? sprintf "%0.3f", $value : $value ) : '-';
+                        }
+                        if(exists $agg->{by} ) {
+                            my $by = delete $agg->{by};
+                            if( exists $by->{value} ) {
+                                unshift @out, $by->{value};
                             }
-                            $subaggs{$k} = \@sub if @sub;
                         }
-                    }
-                }
-                if( keys %subaggs ) {
-                    foreach my $subagg (sort keys %subaggs) {
-                        foreach my $extra ( @{ $subaggs{$subagg} } ) {
-                            output({data=>1},
-                                join "\t", @out, $subagg, @{ $extra }
-                            );
+                        # Handle the --with elements
+                        my %subaggs = ();
+                        if( keys %{ $agg } ) {
+                            foreach my $k (sort keys %{ $agg }) {
+                                next unless is_hashref($agg->{$k});
+                                if( exists $agg->{$k}{buckets} ) {
+                                    my @sub;
+                                    foreach my $subagg (@{ $agg->{$k}{buckets} }) {
+                                        my @elms = ();
+                                        next unless exists $subagg->{key};
+                                        push @elms, $subagg->{key};
+                                        foreach my $dk (qw(doc_count score bg_count)) {
+                                            next unless exists $subagg->{$dk};
+                                            my $v = delete $subagg->{$dk};
+                                            push @elms, defined $v ? ($dk eq 'score' ? sprintf "%0.3f", $v : $v ) : '-';
+                                        }
+                                        push @sub, \@elms;
+                                    }
+                                    $subaggs{$k} = \@sub if @sub;
+                                }
+                            }
                         }
+                        if( keys %subaggs ) {
+                            foreach my $subagg (sort keys %subaggs) {
+                                foreach my $extra ( @{ $subaggs{$subagg} } ) {
+                                    output({indent=>$indent,data=>1},
+                                        join "\t", @out, $subagg, @{ $extra }
+                                    );
+                                }
+                            }
+                        }
+                        else {
+                            # Simple output
+                            output({indent=>$indent,data=>!$CONFIG{summary}}, join("\t",@out));
+                        }
+                        $displayed++;
                     }
+                    $TOTAL_HITS = exists $result->{aggegrations}{top}{other} ? $result->{aggregations}{top}{other} + $displayed : $TOTAL_HITS;
                 }
-                else {
-                    # Simple output
-                    output(exists $OPT{by} ? {data=>1} : {}, join("\t",@out));
+                elsif(exists $result->{aggregations}{top}) {
+                    output({indent=>1,color=>'red'}, "= No results.");
                 }
-                $displayed++;
             }
-            $TOTAL_HITS = exists $result->{aggegrations}{top}{other} ? $result->{aggregations}{top}{other} + $displayed : $TOTAL_HITS;
-            next AGES;
-        }
-        elsif(exists $result->{aggregations}{top}) {
-            output({indent=>1,color=>'red'}, "= No results.");
             next AGES;
         }
 
@@ -455,7 +474,7 @@ output({stderr=>1,color=>'yellow'},
     ),
 );
 
-if(!exists $OPT{by} && !exists $OPT{with} && keys %AGGS_TOTALS) {
+if($CONFIG{summary} && keys %AGGS_TOTALS) {
     output({color=>'yellow'}, '#', '# Totals across batch', '#');
     output({color=>'cyan'},$agg_header);
     foreach my $k (sort { $AGGS_TOTALS{$b} <=> $AGGS_TOTALS{$a} } keys %AGGS_TOTALS) {
